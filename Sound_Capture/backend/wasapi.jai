@@ -20,13 +20,11 @@ sound_capture_stop :: () {
 }
 
 sound_capture_deinit :: () {
-    for devices {
-        safe_release(cast(*IMMDevice)it.internal_data);
-        free(it.name);
-        CoTaskMemFree(it.internal_id);
+    for * sound_capture_devices {
+        sound_capture_free_device(it);
     }
 
-    array_reset(*devices);
+    array_reset(*sound_capture_devices);
 
     safe_release_and_reset(*enumerator);
     safe_release_and_reset(*client);
@@ -74,14 +72,12 @@ sound_capture_get_next_buffer :: () -> []u16 {
     return buffer;
 }
 
-sound_capture_get_devices :: () -> []Input_Device {
-    for devices {
-        safe_release(cast(*IMMDevice)it.internal_data);
-        free(it.name);
-        CoTaskMemFree(it.internal_id);
+sound_capture_refresh_devices :: () {
+    for * sound_capture_devices {
+        sound_capture_free_device(it);
     }
 
-    array_reset(*devices);
+    array_reset(*sound_capture_devices);
 
     collection: *IMMDeviceCollection;
 
@@ -91,28 +87,48 @@ sound_capture_get_devices :: () -> []Input_Device {
     count: u32;
     IMMDeviceCollection_GetCount(collection, *count);
 
-    array_resize(*devices, count);
+    array_resize(*sound_capture_devices, count);
 
     for 0..count-1 {
         imm_device: *IMMDevice;
         hr = IMMDeviceCollection_Item(collection, it, *imm_device);
         check_hr("Collection item");
-        fill_device(*devices[it], imm_device);
+        fill_device(*sound_capture_devices[it], imm_device);
     }
     safe_release(collection);
 
     #import "Windows_Utf8";
-    return devices;
 }
 
-sound_capture_get_default_device :: () -> Input_Device {
-    device: Input_Device;
+sound_capture_get_default_device :: () -> *Input_Device {
+     // We do this to make sure we don't leak any memory
+    sound_capture_refresh_devices();
+
     imm_device: *IMMDevice;
     hr := IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, .eCapture, .eConsole, *imm_device);
     check_hr("Get audio endpoint");
 
-    fill_device(*device, imm_device);
-    return device;
+    id: *u16;
+    hr = IMMDevice_GetId(imm_device, *id);
+    check_hr("Device get id");
+
+    for * d: sound_capture_devices {
+        // Check if the ids are the same.
+        index := 0;
+        while true {
+            id0, id1 := id[index], (cast(*u16)d.internal_id)[index];
+            if id0 == 0 && id1 == 0 {
+                IUnknown_Release(imm_device);
+                CoTaskMemFree(id);
+                return d;
+            }
+            else if id0 != id1 continue d;
+            index += 1;
+        }
+    }
+
+    // We plugged something while we were checking
+    return sound_capture_get_default_device();
 }
 
 sound_capture_set_device :: (device: Input_Device) {
@@ -144,10 +160,19 @@ sound_capture_set_device :: (device: Input_Device) {
 
 }
 
+sound_capture_free_device :: (device: *Input_Device) {
+    safe_release(cast(*IMMDevice)device.internal_data);
+    free(device.name);
+    CoTaskMemFree(device.internal_id);
+
+    device.* = .{};
+}
+
 #scope_file
 
 fill_device :: (device: *Input_Device, imm_device: *IMMDevice) {
     property_store: *IPropertyStore;
+    defer safe_release(property_store);
     device.internal_data = imm_device;
 
     hr := IMMDevice_GetId(imm_device, cast(**u16)*device.internal_id);
@@ -161,9 +186,7 @@ fill_device :: (device: *Input_Device, imm_device: *IMMDevice) {
     check_hr("Property store get value");
 
     device.name = wide_to_utf8(var_name.pwszVal);
-
-    safe_release(property_store);
-
+    PropVariantClear(*var_name);
 }
 
 COINIT_APARTMENTTHREADED :: 0;
@@ -437,6 +460,7 @@ PROPVARIANT :: struct {
         pwszVal: *u16;
     }
 }
+PropVariantClear :: (pvar: *PROPVARIANT) -> HRESULT #foreign Ole32;
 
 IPropertyStore :: struct {
     vtable: *IPropertyStore_VTable;
@@ -522,7 +546,6 @@ else {
 enumerator: *IMMDeviceEnumerator;
 client: *IAudioClient;
 capture_client: *IAudioCaptureClient;
-devices: [..]Input_Device;
 
 #import "Basic";
 #import "Windows";

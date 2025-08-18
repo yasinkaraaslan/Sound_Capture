@@ -9,6 +9,7 @@ Input_Device :: struct {
     internal_data: *void;
 }
 
+sound_capture_devices: [..]Input_Device;
 #scope_module
 
 SAMPLING_RATE :: 48000;
