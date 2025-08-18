@@ -5,6 +5,7 @@ capture_init :: () {
     hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
     check_hr("CoCreateInstance");
 
+    refresh_capture_devices();
     default_device := get_default_capture_device();
     set_capture_device(default_device);
 }
@@ -73,7 +74,6 @@ refresh_capture_devices :: () {
     for * sound_capture_devices {
         free_device(it);
     }
-
     array_reset(*sound_capture_devices);
 
     collection: *IMMDeviceCollection;
@@ -98,8 +98,6 @@ refresh_capture_devices :: () {
 }
 
 get_default_capture_device :: () -> *Input_Device {
-    refresh_capture_devices();
-
     imm_device: *IMMDevice;
     hr := IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, .eCapture, .eConsole, *imm_device);
     check_hr("Get audio endpoint");
@@ -123,11 +121,12 @@ get_default_capture_device :: () -> *Input_Device {
         }
     }
 
-    // We plugged something while we were checking
-    return get_default_capture_device();
+    // We plugged something while we were checking... or something.
+    // You have to refresh the devices in this case.
+    return null;
 }
 
-set_capture_device :: (device: Input_Device) {
+set_capture_device :: (device: *Input_Device) {
     if client {
         stop_recording();
         IUnknown_Release(client);
@@ -170,9 +169,9 @@ set_capture_device :: (device: Input_Device) {
 }
 
 free_device :: (device: *Input_Device) {
+    if device.name free(device.name);
+    if device.internal_id CoTaskMemFree(device.internal_id);
     safe_release(cast(*IMMDevice)device.internal_data);
-    free(device.name);
-    CoTaskMemFree(device.internal_id);
 
     device.* = .{};
 }
@@ -258,6 +257,7 @@ AUDCLNT_STREAMOPTIONS :: enum s32 {
   AMBISONICS;
   POST_VOLUME_LOOPBACK;
 }
+
 AUDIO_STREAM_CATEGORY :: enum s32 {
     Other               :: 0;
     ForegroundOnlyMedia :: 1;
@@ -589,5 +589,4 @@ client: *IAudioClient3;
 capture_client: *IAudioCaptureClient;
 
 #import "Wav_File";
-#import "Basic";
 #import "Windows";

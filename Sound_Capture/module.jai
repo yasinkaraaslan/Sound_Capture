@@ -22,6 +22,7 @@ capture_thread: Thread;
 capture_mutex: Mutex;
 
 #import "Thread";
+#import "Basic";
 
 #if OS == {
 case .WINDOWS; #load "backend/wasapi.jai";
