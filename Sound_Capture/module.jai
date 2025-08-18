@@ -10,13 +10,13 @@ Input_Device :: struct {
 }
 
 sound_capture_devices: [..]Input_Device;
+
+SAMPLE_RATE :: 48000;
+NUM_CHANNELS :: 2;
+BIT_DEPTH :: 16;
+BLOCK_ALIGN :: NUM_CHANNELS * BIT_DEPTH / 8;
+
 #scope_module
-
-SAMPLING_RATE :: 48000;
-CHANNELS :: 2;
-BIT_RATE :: 16;
-BLOCK_SIZE :: CHANNELS * BIT_RATE / 8;
-
 
 capture_thread: Thread;
 capture_mutex: Mutex;

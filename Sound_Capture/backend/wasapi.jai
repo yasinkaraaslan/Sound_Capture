@@ -1,27 +1,27 @@
-sound_capture_init :: () {
+capture_init :: () {
     CoInitialize(null);
 
     CLSID_MMDeviceEnumerator := *uid("BCDE0395-E52F-467C-8E3D-C4579291692E");
     hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
     check_hr("CoCreateInstance");
 
-    default_device := sound_capture_get_default_device();
-    sound_capture_set_device(default_device);
+    default_device := get_default_capture_device();
+    set_capture_device(default_device);
 }
 
-sound_capture_start :: () {
+start_recording :: () {
     hr := IAudioClient_Start(client);
     check_hr("Client start");
 }
 
-sound_capture_stop :: () {
+stop_recording :: () {
     hr := IAudioClient_Stop(client);
     check_hr("Client stop");
 }
 
-sound_capture_deinit :: () {
+capture_deinit :: () {
     for * sound_capture_devices {
-        sound_capture_free_device(it);
+        free_device(it);
     }
 
     array_reset(*sound_capture_devices);
@@ -34,19 +34,18 @@ sound_capture_deinit :: () {
 }
 
 // Allocated with temp
-sound_capture_get_next_buffer :: () -> []u16 {
+get_next_sound_buffer :: () -> []s16 {
     packet_length: u32;
     hr := IAudioCaptureClient_GetNextPacketSize(capture_client, *packet_length);
 
     if !check_hr("Get next packet size") {
         return .[];
     }
-    buffer := [..]u16.{ allocator=temp };
 
+    buffer := [..]s16.{ allocator=temp };
     while packet_length != 0 {
-
         num_frames: u32;
-        data: []u16;
+        data: []s16;
 
         flags: u32;
 
@@ -55,12 +54,10 @@ sound_capture_get_next_buffer :: () -> []u16 {
         TIMESTAMP_ERROR    :: 4;
 
         hr := IAudioCaptureClient_GetBuffer(capture_client, cast(**u8)*data.data, *num_frames, *flags, null, null);
-        data.count = num_frames * CHANNELS;
-        if !check_hr("Get buffer") || flags & SILENT {
-            data.count = 0;
+        data.count = num_frames * NUM_CHANNELS;
+        if check_hr("Get buffer") && !(flags & SILENT) {
+            array_add(*buffer, ..data);
         }
-        array_add(*buffer, ..data);
-
 
         hr = IAudioCaptureClient_ReleaseBuffer(capture_client, num_frames);
         check_hr("Release buffer");
@@ -72,9 +69,9 @@ sound_capture_get_next_buffer :: () -> []u16 {
     return buffer;
 }
 
-sound_capture_refresh_devices :: () {
+refresh_capture_devices :: () {
     for * sound_capture_devices {
-        sound_capture_free_device(it);
+        free_device(it);
     }
 
     array_reset(*sound_capture_devices);
@@ -100,9 +97,8 @@ sound_capture_refresh_devices :: () {
     #import "Windows_Utf8";
 }
 
-sound_capture_get_default_device :: () -> *Input_Device {
-     // We do this to make sure we don't leak any memory
-    sound_capture_refresh_devices();
+get_default_capture_device :: () -> *Input_Device {
+    refresh_capture_devices();
 
     imm_device: *IMMDevice;
     hr := IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, .eCapture, .eConsole, *imm_device);
@@ -128,31 +124,44 @@ sound_capture_get_default_device :: () -> *Input_Device {
     }
 
     // We plugged something while we were checking
-    return sound_capture_get_default_device();
+    return get_default_capture_device();
 }
 
-sound_capture_set_device :: (device: Input_Device) {
+set_capture_device :: (device: Input_Device) {
     if client {
-        sound_capture_stop();
+        stop_recording();
         IUnknown_Release(client);
     }
     safe_release(capture_client);
 
     imm_device := cast(*IMMDevice)device.internal_data;
 
-    mix_format := WAVEFORMATEX.{
+    // mix_format: *Waveformatex;
+    // hr = IAudioClient_GetMixFormat(client, *mix_format);
+    // check_hr("Get mix format");
+
+    mix_format: = Waveformatex.{
+        nChannels = NUM_CHANNELS,
+        nSamplesPerSec = SAMPLE_RATE,
+        nAvgBytesPerSec = SAMPLE_RATE * BLOCK_ALIGN,
+        nBlockAlign = BLOCK_ALIGN,
+        wBitsPerSample = BIT_DEPTH,
         wFormatTag = WAVE_FORMAT_PCM,
-        nChannels = CHANNELS,
-        nSamplesPerSec = SAMPLING_RATE,
-        nAvgBytesPerSec = SAMPLING_RATE * BLOCK_SIZE,
-        nBlockAlign = BLOCK_SIZE,
-        wBitsPerSample = BIT_RATE,
     };
 
-    hr := IMMDevice_Activate(imm_device, *uid(IAudioClient_UUID), CLSCTX_ALL, null, cast(**void)*client);
+    hr := IMMDevice_Activate(imm_device, *uid(IAudioClient3_UUID), CLSCTX_ALL, null, cast(**void)*client);
     check_hr("Device activate");
 
-    hr = IAudioClient_Initialize(client, .SHARED, 0, 0, 0, *mix_format, null);
+
+    properties := AudioClientProperties.{
+        cbSize = size_of(AudioClientProperties),
+        Options = .RAW,
+    };
+
+    hr = IAudioClient2_SetClientProperties(client, *properties);
+    check_hr("Set client properties");
+
+    hr = IAudioClient3_InitializeSharedAudioStream(client, 0, 0, *mix_format, null);
     check_hr("Client initialize");
 
     hr = IAudioClient_GetService(client, *uid(IAudioCaptureClient_UUID), cast(**void)*capture_client);
@@ -160,7 +169,7 @@ sound_capture_set_device :: (device: Input_Device) {
 
 }
 
-sound_capture_free_device :: (device: *Input_Device) {
+free_device :: (device: *Input_Device) {
     safe_release(cast(*IMMDevice)device.internal_data);
     free(device.name);
     CoTaskMemFree(device.internal_id);
@@ -189,54 +198,21 @@ fill_device :: (device: *Input_Device, imm_device: *IMMDevice) {
     PropVariantClear(*var_name);
 }
 
-COINIT_APARTMENTTHREADED :: 0;
-COINIT_MULTITHREADED     :: 1;
-COINIT_DISABLE_OLE1DDE   :: 2;
-COINIT_SPEED_OVER_MEMORY :: 3;
 
-using CLSCTX :: enum_flags u32 {
-    CLSCTX_INPROC_SERVER    :: 0x1;
-    CLSCTX_INPROC_HANDLER   :: 0x2;
-    CLSCTX_LOCAL_SERVER     :: 0x4;
-    CLSCTX_INPROC_SERVER16  :: 0x8;
-    CLSCTX_REMOTE_SERVER    :: 0x10;
-    CLSCTX_INPROC_HANDLER16 :: 0x20;
-    CLSCTX_RESERVED1        :: 0x40;
-    CLSCTX_RESERVED2        :: 0x80;
-    CLSCTX_RESERVED3        :: 0x100;
-    CLSCTX_RESERVED4        :: 0x200;
-    CLSCTX_NO_CODE_DOWNLOAD :: 0x400;
-    CLSCTX_RESERVED5        :: 0x800;
-    CLSCTX_NO_CUSTOM_MARSHAL    :: 0x1000;
-    CLSCTX_ENABLE_CODE_DOWNLOAD :: 0x2000;
-    CLSCTX_NO_FAILURE_LOG       :: 0x4000;
-    CLSCTX_DISABLE_AAA          :: 0x8000;
-    CLSCTX_ENABLE_AAA           :: 0x10000;
-    CLSCTX_FROM_DEFAULT_CONTEXT :: 0x20000;
-    CLSCTX_ACTIVATE_X86_SERVER  :: 0x40000;
-    CLSCTX_ACTIVATE_32_BIT_SERVER   :: CLSCTX_ACTIVATE_X86_SERVER;
-    CLSCTX_ACTIVATE_64_BIT_SERVER   :: 0x80000;
-    CLSCTX_ENABLE_CLOAKING          :: 0x100000;
-    CLSCTX_APPCONTAINER             :: 0x400000;
-    CLSCTX_ACTIVATE_AAA_AS_IU       :: 0x800000;
-    CLSCTX_RESERVED6                :: 0x1000000;
-    CLSCTX_ACTIVATE_ARM32_SERVER    :: 0x2000000;
-    CLSCTX_PS_DLL                   :: 0x80000000;
+// COM stuff
+CLSCTX_INPROC_SERVER    :: 0x1;
+CLSCTX_INPROC_HANDLER   :: 0x2;
+CLSCTX_LOCAL_SERVER     :: 0x4;
+CLSCTX_REMOTE_SERVER    :: 0x10;
 
-    CLSCTX_INPROC   :: CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER;
-    CLSCTX_ALL      :: CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER;
-    CLSCTX_SERVER   :: CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER;
-}
+CLSCTX_ALL   :: CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER;
 
-// @@ Move this stuff to Windows.jai or COM.jai ?
 CoInitialize   :: (pvReserved: *void) -> HRESULT #foreign Ole32;
 CoUninitialize :: () -> void    #foreign Ole32;
-CoInitializeEx :: (pvReserved: *void, dwCoInit: DWORD) -> HRESULT #foreign Ole32;
-
 
 REFCLSID :: *IID;
 
-CoCreateInstance :: (rclsid: REFCLSID, pUnkOuter: *IUnknown, dwClsContext: CLSCTX, riid: REFIID, ppv: **void) -> HRESULT #foreign Ole32;
+CoCreateInstance :: (rclsid: REFCLSID, pUnkOuter: *IUnknown, dwClsContext: u32, riid: REFIID, ppv: **void) -> HRESULT #foreign Ole32;
 
 CoTaskMemFree :: (pointer: *void) #foreign Ole32;
 
@@ -245,8 +221,6 @@ Ole32 :: #system_library "ole32";
 //
 // WASAPI Bindings
 //
-
-WAVE_FORMAT_PCM :: 0x01;
 
 DEVICE_STATE_ACTIVE     :: 0x1;
 DEVICE_STATE_DISABLED   :: 0x2;
@@ -275,17 +249,40 @@ AUDCLNT_SHAREMODE :: enum s32 {
     EXCLUSIVE :: 1;
 }
 
-WAVEFORMATEX :: struct {
-    wFormatTag:      u16;
-    nChannels:       u16;
-    nSamplesPerSec:  u32;
-    nAvgBytesPerSec: u32;
-    nBlockAlign:     u16;
-    wBitsPerSample:  u16;
-    cbSize:          u16;
+LPCGUID :: *GUID;
+
+AUDCLNT_STREAMOPTIONS :: enum s32 {
+  NONE;
+  RAW;
+  MATCH_FORMAT;
+  AMBISONICS;
+  POST_VOLUME_LOOPBACK;
+}
+AUDIO_STREAM_CATEGORY :: enum s32 {
+    Other               :: 0;
+    ForegroundOnlyMedia :: 1;
+
+    Communications      :: 3;
+    Alerts              :: 4;
+    SoundEffects        :: 5;
+    GameEffects         :: 6;
+    GameMedia           :: 7;
+    GameChat            :: 8;
+    Speech              :: 9;
+    Movie               :: 10;
+    Media               :: 11;
+
+    FarFieldSpeech      :: 12;
+    UniformSpeech       :: 13;
+    VoiceTyping         :: 14;
 }
 
-LPCGUID :: *GUID;
+AudioClientProperties :: struct {
+    cbSize:     u32;
+    bIsOffload: BOOL;
+    eCategory:  AUDIO_STREAM_CATEGORY;
+    Options:    AUDCLNT_STREAMOPTIONS;
+}
 
 IAudioClient_UUID :: "1CB9AD4C-DBFA-4c32-B178-C2F568A703B2";
 IAudioClient :: struct {
@@ -295,7 +292,7 @@ IAudioClient :: struct {
 IAudioClient_VTable :: struct #type_info_none {
     using vtable:      IUnknown_VTable;
 
-    Initialize:        #type (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, StreamFlags: u32, hnsBufferDuration: s64, hnsPeriodicity: s64, pFormat: *WAVEFORMATEX, AudioSessionGuid: LPCGUID) -> HRESULT #cpp_method;
+    Initialize:        #type (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, StreamFlags: u32, hnsBufferDuration: s64, hnsPeriodicity: s64, pFormat: *Waveformatex, AudioSessionGuid: LPCGUID) -> HRESULT #cpp_method;
 
     GetBufferSize:     #type (this: *IAudioClient, pNumBufferFrames: *u32) -> HRESULT #cpp_method;
 
@@ -303,9 +300,9 @@ IAudioClient_VTable :: struct #type_info_none {
 
     GetCurrentPadding: #type (this: *IAudioClient, pNumPaddingFrames: *u32) -> HRESULT #cpp_method;
 
-    IsFormatSupported: #type (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, pFormat: *WAVEFORMATEX, ppClosestMatch: **WAVEFORMATEX) -> HRESULT #cpp_method;
+    IsFormatSupported: #type (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, pFormat: *Waveformatex, ppClosestMatch: **Waveformatex) -> HRESULT #cpp_method;
 
-    GetMixFormat:      #type (this: *IAudioClient, ppDeviceFormat: **WAVEFORMATEX) -> HRESULT #cpp_method;
+    GetMixFormat:      #type (this: *IAudioClient, ppDeviceFormat: **Waveformatex) -> HRESULT #cpp_method;
 
     GetDevicePeriod:   #type (this: *IAudioClient, phnsDefaultDevicePeriod: *s64, phnsMinimumDevicePeriod: *s64) -> HRESULT #cpp_method;
 
@@ -319,7 +316,7 @@ IAudioClient_VTable :: struct #type_info_none {
 
     GetService:        #type (this: *IAudioClient, riid: *IID, ppv: **void) -> HRESULT #cpp_method;
 }
-IAudioClient_Initialize :: inline (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, StreamFlags: u32, hnsBufferDuration: s64, hnsPeriodicity: s64, pFormat: *WAVEFORMATEX, AudioSessionGuid: LPCGUID) -> HRESULT { return this.vtable.Initialize(this, ShareMode, StreamFlags, hnsBufferDuration, hnsPeriodicity, pFormat, AudioSessionGuid); }
+IAudioClient_Initialize :: inline (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, StreamFlags: u32, hnsBufferDuration: s64, hnsPeriodicity: s64, pFormat: *Waveformatex, AudioSessionGuid: LPCGUID) -> HRESULT { return this.vtable.Initialize(this, ShareMode, StreamFlags, hnsBufferDuration, hnsPeriodicity, pFormat, AudioSessionGuid); }
 
 IAudioClient_GetBufferSize :: inline (this: *IAudioClient, pNumBufferFrames: *u32) -> HRESULT { return this.vtable.GetBufferSize(this, pNumBufferFrames); }
 
@@ -327,9 +324,9 @@ IAudioClient_GetStreamLatency :: inline (this: *IAudioClient, phnsLatency: *s64)
 
 IAudioClient_GetCurrentPadding :: inline (this: *IAudioClient, pNumPaddingFrames: *u32) -> HRESULT { return this.vtable.GetCurrentPadding(this, pNumPaddingFrames); }
 
-IAudioClient_IsFormatSupported :: inline (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, pFormat: *WAVEFORMATEX, ppClosestMatch: **WAVEFORMATEX) -> HRESULT { return this.vtable.IsFormatSupported(this, ShareMode, pFormat, ppClosestMatch); }
+IAudioClient_IsFormatSupported :: inline (this: *IAudioClient, ShareMode: AUDCLNT_SHAREMODE, pFormat: *Waveformatex, ppClosestMatch: **Waveformatex) -> HRESULT { return this.vtable.IsFormatSupported(this, ShareMode, pFormat, ppClosestMatch); }
 
-IAudioClient_GetMixFormat :: inline (this: *IAudioClient, ppDeviceFormat: **WAVEFORMATEX) -> HRESULT { return this.vtable.GetMixFormat(this, ppDeviceFormat); }
+IAudioClient_GetMixFormat :: inline (this: *IAudioClient, ppDeviceFormat: **Waveformatex) -> HRESULT { return this.vtable.GetMixFormat(this, ppDeviceFormat); }
 
 IAudioClient_GetDevicePeriod :: inline (this: *IAudioClient, phnsDefaultDevicePeriod: *s64, phnsMinimumDevicePeriod: *s64) -> HRESULT { return this.vtable.GetDevicePeriod(this, phnsDefaultDevicePeriod, phnsMinimumDevicePeriod); }
 
@@ -344,6 +341,50 @@ IAudioClient_SetEventHandle :: inline (this: *IAudioClient, eventHandle: HANDLE)
 IAudioClient_GetService :: inline (this: *IAudioClient, riid: *IID, ppv: **void) -> HRESULT { return this.vtable.GetService(this, riid, ppv); }
 
 vtable :: (obj: *IAudioClient) -> *IAudioClient_VTable { return obj.vtable; }
+
+IAudioClient2_UUID :: "726778CD-F60A-4eda-82DE-E47610CD78AA";
+IAudioClient2 :: struct {
+    vtable: *IAudioClient2_VTable;
+    #place vtable; #as iaudioclient: IAudioClient; // Support cast to IAudioClient
+}
+IAudioClient2_VTable :: struct #type_info_none {
+    using,except(vtable) vtable:              IAudioClient_VTable;
+
+    IsOffloadCapable:    #type (this: *IAudioClient2, Category: u32, pbOffloadCapable: *BOOL) -> HRESULT #cpp_method;
+
+    SetClientProperties: #type (this: *IAudioClient2, pProperties: *AudioClientProperties) -> HRESULT #cpp_method;
+
+    GetBufferSizeLimits: #type (this: *IAudioClient2, pFormat: *Waveformatex, bEventDriven: BOOL, phnsMinBufferDuration: *s64, phnsMaxBufferDuration: *s64) -> HRESULT #cpp_method;
+}
+IAudioClient2_IsOffloadCapable :: inline (this: *IAudioClient2, Category: u32, pbOffloadCapable: *BOOL) -> HRESULT { return this.vtable.IsOffloadCapable(this, Category, pbOffloadCapable); }
+
+IAudioClient2_SetClientProperties :: inline (this: *IAudioClient2, pProperties: *AudioClientProperties) -> HRESULT { return this.vtable.SetClientProperties(this, pProperties); }
+
+IAudioClient2_GetBufferSizeLimits :: inline (this: *IAudioClient2, pFormat: *Waveformatex, bEventDriven: BOOL, phnsMinBufferDuration: *s64, phnsMaxBufferDuration: *s64) -> HRESULT { return this.vtable.GetBufferSizeLimits(this, pFormat, bEventDriven, phnsMinBufferDuration, phnsMaxBufferDuration); }
+
+vtable :: (obj: *IAudioClient2) -> *IAudioClient2_VTable { return obj.vtable; }
+
+IAudioClient3_UUID :: "7ED4EE07-8E67-4CD4-8C1A-2B7A5987AD42";
+IAudioClient3 :: struct {
+    vtable: *IAudioClient3_VTable;
+    #place vtable; #as iaudioclient2: IAudioClient2; // Support cast to IAudioClient2
+}
+IAudioClient3_VTable :: struct #type_info_none {
+    using,except(vtable) vtable:                           IAudioClient2_VTable;
+
+    GetSharedModeEnginePeriod:        #type (this: *IAudioClient3, pFormat: *Waveformatex, pDefaultPeriodInFrames: *u32, pFundamentalPeriodInFrames: *u32, pMinPeriodInFrames: *u32, pMaxPeriodInFrames: *u32) -> HRESULT #cpp_method;
+
+    GetCurrentSharedModeEnginePeriod: #type (this: *IAudioClient3, ppFormat: **Waveformatex, pCurrentPeriodInFrames: *u32) -> HRESULT #cpp_method;
+
+    InitializeSharedAudioStream:      #type (this: *IAudioClient3, StreamFlags: u32, PeriodInFrames: u32, pFormat: *Waveformatex, AudioSessionGuid: LPCGUID) -> HRESULT #cpp_method;
+}
+IAudioClient3_GetSharedModeEnginePeriod :: inline (this: *IAudioClient3, pFormat: *Waveformatex, pDefaultPeriodInFrames: *u32, pFundamentalPeriodInFrames: *u32, pMinPeriodInFrames: *u32, pMaxPeriodInFrames: *u32) -> HRESULT { return this.vtable.GetSharedModeEnginePeriod(this, pFormat, pDefaultPeriodInFrames, pFundamentalPeriodInFrames, pMinPeriodInFrames, pMaxPeriodInFrames); }
+
+IAudioClient3_GetCurrentSharedModeEnginePeriod :: inline (this: *IAudioClient3, ppFormat: **Waveformatex, pCurrentPeriodInFrames: *u32) -> HRESULT { return this.vtable.GetCurrentSharedModeEnginePeriod(this, ppFormat, pCurrentPeriodInFrames); }
+
+IAudioClient3_InitializeSharedAudioStream :: inline (this: *IAudioClient3, StreamFlags: u32, PeriodInFrames: u32, pFormat: *Waveformatex, AudioSessionGuid: LPCGUID) -> HRESULT { return this.vtable.InitializeSharedAudioStream(this, StreamFlags, PeriodInFrames, pFormat, AudioSessionGuid); }
+
+vtable :: (obj: *IAudioClient3) -> *IAudioClient3_VTable { return obj.vtable; }
 
 
 IAudioCaptureClient_UUID :: "C8ADBD64-E71E-48a0-A4DE-185C395CD317";
@@ -377,7 +418,7 @@ IMMDevice :: struct {
 IMMDevice_VTable :: struct #type_info_none {
     using vtable:      IUnknown_VTable;
 
-    Activate:          #type (this: *IMMDevice, iid: *IID, dwClsCtx: CLSCTX, pActivationParams: *void, ppInterface: **void) -> HRESULT #cpp_method;
+    Activate:          #type (this: *IMMDevice, iid: *IID, dwClsCtx: u32, pActivationParams: *void, ppInterface: **void) -> HRESULT #cpp_method;
 
     OpenPropertyStore: #type (this: *IMMDevice, stgmAccess: u32, ppProperties: **IPropertyStore) -> HRESULT #cpp_method;
 
@@ -385,7 +426,7 @@ IMMDevice_VTable :: struct #type_info_none {
 
     GetState:          #type (this: *IMMDevice, pdwState: *u32) -> HRESULT #cpp_method;
 }
-IMMDevice_Activate :: inline (this: *IMMDevice, iid: *IID, dwClsCtx: CLSCTX, pActivationParams: *void, ppInterface: **void) -> HRESULT { return this.vtable.Activate(this, iid, dwClsCtx, pActivationParams, ppInterface); }
+IMMDevice_Activate :: inline (this: *IMMDevice, iid: *IID, dwClsCtx: u32, pActivationParams: *void, ppInterface: **void) -> HRESULT { return this.vtable.Activate(this, iid, dwClsCtx, pActivationParams, ppInterface); }
 
 IMMDevice_OpenPropertyStore :: inline (this: *IMMDevice, stgmAccess: u32, ppProperties: **IPropertyStore) -> HRESULT { return this.vtable.OpenPropertyStore(this, stgmAccess, ppProperties); }
 
@@ -544,8 +585,9 @@ else {
 }
 
 enumerator: *IMMDeviceEnumerator;
-client: *IAudioClient;
+client: *IAudioClient3;
 capture_client: *IAudioCaptureClient;
 
+#import "Wav_File";
 #import "Basic";
 #import "Windows";
