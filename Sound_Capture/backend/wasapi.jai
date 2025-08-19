@@ -154,11 +154,22 @@ set_capture_device :: (device: *Input_Device) {
 
     properties := AudioClientProperties.{
         cbSize = size_of(AudioClientProperties),
+
+        // We get a very low quality output and a huge startup latency if we don't set this.
+        // You can apply filtering afterwards if you want.
         Options = .RAW,
     };
 
     hr = IAudioClient2_SetClientProperties(client, *properties);
-    check_hr("Set client properties");
+
+    AUDCLNT_E_RAW_MODE_UNSUPPORTED :: 0x88890027;
+
+    if hr == AUDCLNT_E_RAW_MODE_UNSUPPORTED {
+        log_error("[sound_capture] Device '%' doesn't support raw mode. Continuing without it.", device.name);
+    }
+    else {
+        check_hr("Set client properties");
+    }
 
     hr = IAudioClient3_InitializeSharedAudioStream(client, 0, 0, *mix_format, null);
     check_hr("Client initialize");
