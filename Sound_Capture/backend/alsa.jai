@@ -3,7 +3,7 @@ capture_init :: () {
     set_capture_device(get_default_capture_device());
 }
 
-// This isn't actually required, opposed to WASAPI.
+// This isn't actually required, as opposed to WASAPI.
 start_recording :: () {
     hr := snd_pcm_start(current_device.internal_data);
     check_hr("Start PCM");
