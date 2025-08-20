@@ -320,11 +320,6 @@ sound_error_name :: (errnum: s32) -> string {
     return to_string(snd_strerror(errnum));
 }
 
-check_for_alsa_error :: (name: string, errnum: s32) {
-    if !errnum return;
-    log_error("Sound_Player ALSA backend error: functionality %: result code %, %. Current state is %", name, errnum, sound_error_name(errnum), ifx pcm_device then snd_pcm_state(pcm_device) else cast(snd_pcm_state_t) U32_MAX);
-}
-
 // direct (mmap) API
 
 snd_pcm_channel_area_t :: struct {
@@ -345,19 +340,12 @@ snd_device_name_free_hint :: (hints: **void) -> s32 #foreign alsa;
 snd_device_name_get_hint :: (hint: *void, id: *u8) -> *u8 #foreign alsa;
 
 
-#if VERBOSE {
-    check_hr :: (name: string) -> bool #expand {
-        if `hr < 0 {
-            log_error("% failed with code 0x%: %", name, formatInt(`hr, 16), sound_error_name(`hr)); // @Leak
-            return false;
-        }
-        return true;
+check_hr :: (name: string) -> bool #expand {
+    if `hr < 0 {
+        log_error("[sound_capture] % failed with code 0x%: %", name, formatInt(`hr, 16), sound_error_name(`hr)); // @Leak
+        return false;
     }
-}
-else {
-    check_hr :: (name: string) -> bool #expand {
-        return `hr >= 0;
-    }
+    return true;
 }
 
 default_device: *Input_Device;

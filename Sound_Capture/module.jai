@@ -24,8 +24,6 @@
 // So make sure that you recently called refresh_capture_devices() before
 // calling get_default_capture_device().
 
-#module_parameters(VERBOSE := true);
-
 
 // TODO(Yasin): Specifying buffer size
 

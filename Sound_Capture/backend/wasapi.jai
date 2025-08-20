@@ -1,13 +1,14 @@
-capture_init :: () {
+capture_init :: () -> bool {
     CoInitialize(null);
 
     CLSID_MMDeviceEnumerator := *uid("BCDE0395-E52F-467C-8E3D-C4579291692E");
     hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
-    check_hr("CoCreateInstance");
+    if !check_hr("CoCreateInstance") return false;
 
     refresh_capture_devices();
     default_device := get_default_capture_device();
     set_capture_device(default_device);
+    return true;
 }
 
 start_recording :: () {
@@ -576,23 +577,16 @@ vtable :: (obj: *IMMNotificationClient) -> *IMMNotificationClient_VTable { retur
 
 //
 
-#if VERBOSE {
-    check_hr :: (name: string) -> bool #expand {
-        if FAILED(`hr) {
-            System :: #import "System";
-            error_code := cast,no_check(OS_Error_Code)`hr; // We know that it is less than 0 if it's a failure. OS_Error_Code is a u32
-            fail_message := System.get_error_string(error_code);
+check_hr :: (name: string) -> bool #expand {
+    if FAILED(`hr) {
+        System :: #import "System";
+        error_code := cast,no_check(OS_Error_Code)`hr; // We know that it is less than 0 if it's a failure. OS_Error_Code is a u32
+        fail_message := System.get_error_string(error_code);
 
-            log_error("[sound_capture] % failed with code 0x%: %", name, formatInt(`hr, 16), fail_message);
-            return false;
-        }
-        return true;
+        log_error("[sound_capture] % failed with code 0x%: %", name, formatInt(`hr, 16), fail_message);
+        return false;
     }
-}
-else {
-    check_hr :: (name: string) -> bool #expand {
-        return SUCCEEDED(`hr);
-    }
+    return true;
 }
 
 enumerator: *IMMDeviceEnumerator;
