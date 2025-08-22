@@ -38,8 +38,6 @@ get_next_sound_buffer :: () -> []s16 {
     }
     if available_frames == 0 return .[];
 
-    POSIX :: #import "POSIX";
-
     NUM_FRAMES :: 2048;
     buffer := NewArray(NUM_CHANNELS * NUM_FRAMES, s16,, temp);
 

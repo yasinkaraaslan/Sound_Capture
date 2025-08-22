@@ -94,8 +94,6 @@ refresh_capture_devices :: () {
         fill_device(*sound_capture_devices[it], imm_device);
     }
     safe_release(collection);
-
-    #import "Windows_Utf8";
 }
 
 get_default_capture_device :: () -> *Input_Device {

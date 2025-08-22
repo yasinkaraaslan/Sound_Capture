@@ -6,7 +6,6 @@
 
 android_request_audio_permission :: () {
     // Taken from Charles Taylor's Android module
-    #import "Android/Jni";
 
     check_env_init();
     AUDIO_PERMISSION :: "android.permission.RECORD_AUDIO";
@@ -29,6 +28,10 @@ android_request_audio_permission :: () {
 
     args_array := jvalue.[ (cast(*jvalue)*permissions_array).*, (cast(*jvalue)*request_code).*];
     e.CallVoidMethodA(env, context.android_app.activity.clazz, requestPermissions, args_array.data);
+}
+
+android_has_audio_permission :: () -> bool {
+    // @Incomplete
 }
 
 capture_init :: () -> bool {
@@ -84,8 +87,15 @@ get_next_sound_buffer :: () -> []s16 {
     return buffer;
 }
 
-// @Incomplete: get_default_device and refresh_audio_devices (with Jni)
 
+get_default_device :: () -> Input_Device {
+    // @Incomplete
+    return .{};
+}
+
+refresh_audio_devices :: () {
+    // @Incomplete
+}
 
 set_capture_device :: (device: *Input_Device) {
     hr := AAudioStream_close(stream);
@@ -116,6 +126,8 @@ check_hr :: (name: string) -> bool #expand {
     return true;
 }
 
+#import "Android/Jni";
 #import "Android/AAudio";
+
 builder: *AAudioStreamBuilder;
 stream: *AAudioStream;
