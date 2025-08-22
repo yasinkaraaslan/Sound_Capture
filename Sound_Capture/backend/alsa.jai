@@ -3,7 +3,6 @@ capture_init :: () {
     set_capture_device(get_default_capture_device());
 }
 
-// This isn't actually required, as opposed to WASAPI.
 start_recording :: () {
     hr := snd_pcm_start(current_device.internal_data);
     check_hr("Start PCM");
@@ -20,6 +19,46 @@ capture_deinit :: () {
     }
     array_reset(*sound_capture_devices);
     current_device, default_device = null;
+}
+
+// Allocated with temp
+get_next_sound_buffer :: () -> []s16 {
+    pcm := cast(*snd_pcm_t)current_device.internal_data;
+    if !pcm {
+        log_error("[sound_capture] ALSA: Current device has null PCM! Either the device got invalidated, or you used set_capture_device with garbage data");
+        return .[];
+    }
+
+    available_frames := snd_pcm_avail(pcm);
+
+    if available_frames < 0 {
+        hr := available_frames;
+        check_hr("PCM Avail");
+        return .[];
+    }
+    if available_frames == 0 return .[];
+
+    POSIX :: #import "POSIX";
+
+    NUM_FRAMES :: 2048;
+    buffer := NewArray(NUM_CHANNELS * NUM_FRAMES, s16,, temp);
+
+    read_frames := snd_pcm_readi(pcm, buffer.data, NUM_FRAMES);
+    if read_frames < 0 {
+        hr := read_frames;
+        check_hr("PCM read");
+
+        if read_frames == -32 { // Broken pipe
+            hr := snd_pcm_prepare(pcm);
+            check_hr("PCM prepare");
+        }
+
+        return .[];
+    }
+
+
+    buffer.count = NUM_CHANNELS * read_frames;
+    return buffer;
 }
 
 refresh_capture_devices :: () {
@@ -77,51 +116,47 @@ set_capture_device :: (device: *Input_Device) {
     check :: (name: string) #expand {
         hr := `hr;
         if !check_hr(name) {
-            log("Couldn't set capture device to '%'", `device.name);
-            // snd_pcm_close(`pcm_device);
+            log_error("[sound_capture] couldn't set capture device to '%'", `device.name);
+            // snd_pcm_close(`pcm);
             `return;
         }
     }
 
     hr := snd_pcm_open(cast(**snd_pcm_t)*device.internal_data, device.internal_id, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
-    if !check_hr("Open sound device") {
-        log("Couldn't set capture device to '%'", device.name);
-        return;
-    }
-    pcm_device := cast(*snd_pcm_t)device.internal_data;
+    check("PCM open device");
+
+    pcm := cast(*snd_pcm_t)device.internal_data;
 
     hw_params: *snd_pcm_hw_params_t;
     snd_pcm_hw_params_malloc(*hw_params);
     defer snd_pcm_hw_params_free(hw_params);
 
-    snd_pcm_hw_params_any(pcm_device, hw_params);
+    snd_pcm_hw_params_any(pcm, hw_params);
 
-    hr = snd_pcm_hw_params_set_channels(pcm_device, hw_params, NUM_CHANNELS);
+    hr = snd_pcm_hw_params_set_channels(pcm, hw_params, NUM_CHANNELS);
     check("Set PCM channels");
 
-    hr = snd_pcm_hw_params_set_format(pcm_device, hw_params, SND_PCM_FORMAT_S16_MY_ENDIAN);
-    check("Set PCM format");
-
-    hr = snd_pcm_hw_params_set_access(pcm_device, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    hr = snd_pcm_hw_params_set_access(pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     check("Set PCM access");
 
+    hr = snd_pcm_hw_params_set_format(pcm, hw_params, SND_PCM_FORMAT_S16_MY_ENDIAN);
+    check("Set PCM format");
+
     actual_rate: u32 = SAMPLE_RATE;
-    hr = snd_pcm_hw_params_set_rate_near(pcm_device, hw_params, *actual_rate, null);
+    hr = snd_pcm_hw_params_set_rate_near(pcm, hw_params, *actual_rate, null);
     check("Set PCM sample rate");
 
-    hr = snd_pcm_hw_params_set_period_size(pcm_device, hw_params, 256, 0);
-    check("Set PCM period size");
-
-    hr = snd_pcm_hw_params(pcm_device, hw_params);
+    hr = snd_pcm_hw_params(pcm, hw_params);
     check("Set PCM hardware parameters");
 
-    hr = snd_pcm_prepare(pcm_device);
+    hr = snd_pcm_prepare(pcm);
     check("Prepare PCM");
 
     if current_device && current_device.internal_data {
         snd_pcm_close(current_device.internal_data);
         current_device.internal_data = null;
     }
+
 
     current_device = device;
 }
@@ -136,7 +171,7 @@ free_device :: (using device: *Input_Device) {
 }
 
 #scope_file
-alsa :: #library,system "libasound";
+alsa :: #library "libs/libasound";
 
 
 crt :: #system_library "libc";
@@ -154,7 +189,7 @@ snd_pcm_hw_params_t :: struct { }
 snd_pcm_sw_params_t :: struct { }
 
 SND_PCM_STREAM_PLAYBACK :: 0;
-SND_PCM_STREAM_CAPTURE  :: 0;
+SND_PCM_STREAM_CAPTURE  :: 1;
 
 
 snd_pcm_stream_t :: u32;
@@ -238,9 +273,14 @@ snd_pcm_open :: (pcm: **snd_pcm_t, name: *u8, stream: snd_pcm_stream_t, mode: s3
 snd_pcm_close :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
 snd_pcm_delay :: (pcm: *snd_pcm_t, delayp: *snd_pcm_sframes_t) -> s32 #foreign alsa;
 snd_pcm_prepare :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
+
 snd_pcm_writei :: (pcm: *snd_pcm_t, buf: *void, size: snd_pcm_uframes_t) -> snd_pcm_sframes_t #foreign alsa;
+snd_pcm_readi :: (pcm: *snd_pcm_t, buffer: *void, size: snd_pcm_uframes_t) -> snd_pcm_sframes_t #foreign alsa;
+
 snd_pcm_avail :: (pcm: *snd_pcm_t) -> snd_pcm_sframes_t #foreign alsa;
 snd_pcm_avail_update :: (pcm: *snd_pcm_t) -> snd_pcm_sframes_t #foreign alsa;
+snd_pcm_avail_delay :: (pcm: *snd_pcm_t, availp: *snd_pcm_sframes_t, delayp: *snd_pcm_sframes_t) -> s32 #foreign alsa;
+
 snd_pcm_start :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
 snd_pcm_recover :: (pcm: *snd_pcm_t, err: s32, silent: s32) -> s32 #foreign alsa;
 snd_pcm_drop :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
@@ -258,14 +298,6 @@ snd_pcm_state_t :: enum u32 {
 }
 snd_pcm_state :: (pcm: *snd_pcm_t) -> snd_pcm_state_t #foreign alsa;
 
-/*
-snd_pcm_nonblock :: (pcm: *snd_pcm_t, nonblock: s32) -> s32 #foreign alsa;
-snd_pcm_reset :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
-snd_pcm_drain :: (pcm: *snd_pcm_t) -> s32 #foreign alsa;
-snd_pcm_wait :: (pcm: *snd_pcm_t, timeout: s32) -> s32 #foreign alsa;
-*/
-
-
 snd_pcm_set_params :: (pcm: *snd_pcm_t, format: snd_pcm_format_t, access: snd_pcm_access_t, channels: u32, rate: u32, soft_resample: s32, latency: u32) -> s32 #foreign alsa;
 
 snd_pcm_hw_params :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t) -> s32 #foreign alsa;
@@ -274,17 +306,7 @@ snd_pcm_hw_params_get_channels_max :: (params: *snd_pcm_hw_params_t, val: *u32) 
 snd_pcm_hw_params_set_format :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: snd_pcm_format_t) -> s32 #foreign alsa;
 snd_pcm_hw_params_set_access :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, access: snd_pcm_access_t) -> s32 #foreign alsa;
 
-/*
-snd_pcm_hw_params_set_channels_minmax :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, min: *u32, max: *u32) -> s32 #foreign alsa;
-snd_pcm_hw_params_get_channels_min :: (params: *snd_pcm_hw_params_t, val: *u32) -> s32 #foreign alsa;
-snd_pcm_hw_params_get_buffer_size_min :: (params: *snd_pcm_hw_params_t, val: *snd_pcm_uframes_t) -> s32 #foreign alsa;
-snd_pcm_hw_params_get_buffer_time :: (params: *snd_pcm_hw_params_t, val: *u32, dir: *s32) -> s32 #foreign alsa;
-snd_pcm_hw_params_get_period_size_min :: (params: *snd_pcm_hw_params_t, frames: *snd_pcm_uframes_t, dir: *s32) -> s32 #foreign alsa;
-snd_pcm_hw_params_get_period_time :: (params: *snd_pcm_hw_params_t, val: *u32, dir: *s32) -> s32 #foreign alsa;
-snd_pcm_hw_params_test_channels :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: u32) -> s32 #foreign alsa;
-snd_pcm_hw_params_set_periods :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: u32, dir: s32) -> s32 #foreign alsa;
 snd_pcm_hw_params_set_buffer_size :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: snd_pcm_uframes_t) -> s32 #foreign alsa;
-*/
 
 snd_pcm_hw_params_set_period_size :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: snd_pcm_uframes_t, dir: s32) -> s32 #foreign alsa;
 snd_pcm_hw_params_set_rate_near :: (pcm: *snd_pcm_t, params: *snd_pcm_hw_params_t, val: *u32, dir: *s32) -> s32 #foreign alsa;
@@ -298,10 +320,14 @@ snd_pcm_hw_params_get_period_size :: (params: *snd_pcm_hw_params_t, frames: *snd
 snd_pcm_hw_params_malloc :: (ptr: **snd_pcm_hw_params_t) -> s32 #foreign alsa;
 snd_pcm_hw_params_free :: (obj: *snd_pcm_hw_params_t) -> void #foreign alsa;
 
+
 snd_pcm_sw_params :: (pcm: *snd_pcm_t, params: *snd_pcm_sw_params_t) -> s32 #foreign alsa;
 snd_pcm_sw_params_malloc :: (ptr: **snd_pcm_sw_params_t) -> s32 #foreign alsa;
 snd_pcm_sw_params_free :: (obj: *snd_pcm_sw_params_t) -> void #foreign alsa;
 
+snd_pcm_sw_params_set_silence_threshold :: (pcm: *snd_pcm_t, params: *snd_pcm_sw_params_t, val: snd_pcm_uframes_t) -> s32 #foreign alsa;
+
+snd_pcm_sw_params_set_silence_size :: (pcm: *snd_pcm_t, params: *snd_pcm_sw_params_t, val: snd_pcm_uframes_t) -> s32 #foreign alsa;
 
 snd_pcm_sw_params_current :: (pcm: *snd_pcm_t, params: *snd_pcm_sw_params_t) -> s32 #foreign alsa;
 snd_pcm_sw_params_get_start_threshold :: (params: *snd_pcm_sw_params_t, val: *snd_pcm_uframes_t) -> s32 #foreign alsa;
@@ -342,7 +368,8 @@ snd_device_name_get_hint :: (hint: *void, id: *u8) -> *u8 #foreign alsa;
 
 check_hr :: (name: string) -> bool #expand {
     if `hr < 0 {
-        log_error("[sound_capture] % failed with code 0x%: %", name, formatInt(`hr, 16), sound_error_name(`hr)); // @Leak
+        error_name := sound_error_name(xx `hr);
+        log_error("[sound_capture] % failed with code 0x%: %", name, formatInt(`hr, 16), error_name);
         return false;
     }
     return true;
