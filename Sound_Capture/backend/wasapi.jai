@@ -1,14 +1,13 @@
-capture_init :: () -> bool {
+capture_init :: () {
     CoInitialize(null);
 
     CLSID_MMDeviceEnumerator := *uid("BCDE0395-E52F-467C-8E3D-C4579291692E");
     hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
-    if !check_hr("CoCreateInstance") return false;
+    check_hr("CoCreateInstance");
 
     refresh_capture_devices();
     default_device := get_default_capture_device();
     set_capture_device(default_device);
-    return true;
 }
 
 start_recording :: () {

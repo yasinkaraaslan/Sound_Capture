@@ -6,9 +6,7 @@
 
 android_request_audio_permission :: () {
     // Taken from Charles Taylor's Android module
-
     check_env_init();
-    AUDIO_PERMISSION :: "android.permission.RECORD_AUDIO";
 
     e := env.*;
 
@@ -16,7 +14,7 @@ android_request_audio_permission :: () {
     Activity := e.FindClass(env, "android/app/Activity");
     requestPermissions := e.GetMethodID(env, Activity, "requestPermissions", "([Ljava/lang/String;I)V");
 
-    permission_jstring := e.NewStringUTF(env, AUDIO_PERMISSION);
+    permission_jstring := e.NewStringUTF(env, ANDROID_AUDIO_PERMISSION);
     defer e.DeleteLocalRef(env, permission_jstring);
 
     // You have to pass an array of permissions, can't just pass one...
@@ -31,12 +29,24 @@ android_request_audio_permission :: () {
 }
 
 android_has_audio_permission :: () -> bool {
-    // @Incomplete
+    libandroid :: #system_library "libandroid";
+    Posix :: #import "POSIX";
+
+    APermissionManager_checkPermission :: (permission: *u8, pid: Posix.pid_t, uid: Posix.uid_t, result: *u32) -> s32 #foreign libandroid;
+
+    PERMISSION_GRANTED :: 0;
+    PERMISSION_DENIED :: -1;
+
+    result: u32;
+    APermissionManager_checkPermission(ANDROID_AUDIO_PERMISSION, Posix.getpid(), Posix.getuid(), *result);
+    return result == PERMISSION_GRANTED;
 }
 
-capture_init :: () -> bool {
+// Make sure you that android_has_permission is true before initializing.
+// Otherwise bad things will happen.
+capture_init :: () {
     hr := AAudio_createStreamBuilder(*builder);
-    if !check_hr("Create stream builder") return false;
+    check_hr("Create stream builder");
 
     AAudioStreamBuilder_setDirection(builder, xx AAUDIO_DIRECTION.INPUT);
     AAudioStreamBuilder_setSharingMode(builder, .SHARED);
@@ -46,8 +56,7 @@ capture_init :: () -> bool {
     AAudioStreamBuilder_setFormat(builder, .PCM_I16);
 
     hr = AAudioStreamBuilder_openStream(builder, *stream);
-    if !check_hr("Open stream") return false;
-    return true;
+    check_hr("Open stream");
 }
 
 start_recording :: () {
@@ -90,12 +99,12 @@ get_next_sound_buffer :: () -> []s16 {
 }
 
 
-get_default_device :: () -> Input_Device {
+get_default_capture_device :: () -> Input_Device {
     // @Incomplete
     return .{};
 }
 
-refresh_audio_devices :: () {
+refresh_capture_devices :: () {
     // @Incomplete
 }
 
@@ -111,7 +120,6 @@ set_capture_device :: (device: *Input_Device) {
 }
 
 #scope_file
-
 env: *JNIEnv;
 check_env_init :: inline () {
     if !env {
@@ -133,3 +141,5 @@ check_hr :: (name: string) -> bool #expand {
 
 builder: *AAudioStreamBuilder;
 stream: *AAudioStream;
+
+ANDROID_AUDIO_PERMISSION :: "android.permission.RECORD_AUDIO";
