@@ -131,7 +131,7 @@ refresh_capture_devices :: () {
     }
 }
 
-set_capture_device :: (device: *Input_Device) {
+set_capture_device :: (device: Input_Device) {
     if stream {
         hr := AAudioStream_close(stream);
         check_hr("Stream close");

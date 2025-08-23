@@ -1,30 +1,27 @@
 start_recording :: () {
-    hr := snd_pcm_start(current_device.internal_data);
+    hr := snd_pcm_start(current_pcm);
     check_hr("Start PCM");
 }
 
 stop_recording :: () {
-    hr := snd_pcm_drop(current_device.internal_data);
+    hr := snd_pcm_drop(current_pcm);
     check_hr("Drop PCM");
 }
 
 capture_deinit :: () {
+    if current_pcm {
+        snd_pcm_close(current_pcm);
+    }
     for * sound_capture_devices {
         free_device(it);
     }
     array_reset(*sound_capture_devices);
-    current_device, default_device = null;
+    default_device = null;
 }
 
 // Allocated with temp
 get_next_sound_buffer :: () -> []s16 {
-    pcm := cast(*snd_pcm_t)current_device.internal_data;
-    if !pcm {
-        log_error("[sound_capture] ALSA: Current device has null PCM! Either the device got invalidated, or you used set_capture_device with garbage data");
-        return .[];
-    }
-
-    available_frames := snd_pcm_avail(pcm);
+    available_frames := snd_pcm_avail(current_pcm);
 
     if available_frames < 0 {
         hr := available_frames;
@@ -36,13 +33,13 @@ get_next_sound_buffer :: () -> []s16 {
     NUM_FRAMES :: 2048;
     buffer := NewArray(NUM_CHANNELS * NUM_FRAMES, s16,, temp);
 
-    read_frames := snd_pcm_readi(pcm, buffer.data, NUM_FRAMES);
+    read_frames := snd_pcm_readi(current_pcm, buffer.data, NUM_FRAMES);
     if read_frames < 0 {
         hr := read_frames;
         check_hr("PCM read");
 
         if read_frames == -32 { // Broken pipe
-            hr := snd_pcm_prepare(pcm);
+            hr := snd_pcm_prepare(current_pcm);
             check_hr("PCM prepare");
         }
 
@@ -55,57 +52,64 @@ get_next_sound_buffer :: () -> []s16 {
 }
 
 refresh_capture_devices :: () {
+    #import "String";
     for * sound_capture_devices {
         free_device(it);
     }
     array_reset(*sound_capture_devices);
+    default_device = null;
 
     hints: **void;
     hr := snd_device_name_hint(-1, "pcm", *hints);
+    if !check_hr("Device name hint") return;
     defer snd_device_name_free_hint(hints);
 
-    if !check_hr("Device name hint") return;
-
+    fallback_default_device: *Input_Device;
     n := hints;
     while n.* != null {
+        defer n+= 1;
         dev_name := snd_device_name_get_hint(n.*, "NAME");
 
         if to_string(dev_name) == "null" {
             c_free(dev_name);
-            n += 1;
             continue;
         }
 
-        handle: *snd_pcm_t;
-        hr = snd_pcm_open(*handle, dev_name, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+        // IOID could be either Input, Output or none.
+        // I guess it can be used both as input and output if it's empty.
 
-        if hr < 0 {
+        ioid := snd_device_name_get_hint(n.*, "IOID");
+        defer c_free(ioid);
+
+        if to_string(ioid) == "Output" {
             c_free(dev_name);
-            n += 1;
             continue;
         }
-
-        snd_pcm_close(handle);
 
         device := array_add(*sound_capture_devices);
         device.name = to_string(snd_device_name_get_hint(n.*, "DESC")); // Human readable name
         device.internal_id = dev_name;
 
-        // device.internal_data = handle;
+        dev_str := to_string(dev_name);
 
-        if to_string(dev_name) == "default" {
+        if starts_with(dev_str, "sysdefault") {
             default_device = device;
         }
-        n += 1;
+        else if dev_str == "default" { // This is actually the default output device. @FixMe before releasing!!
+            fallback_default_device = device;
+        }
     }
 
+    if !default_device {
+        default_device = fallback_default_device;
+    }
 }
 
 get_default_capture_device  :: () -> *Input_Device {
     return default_device;
 }
 
-set_capture_device :: (device: *Input_Device) {
+set_capture_device :: (device: Input_Device) {
     check :: (name: string) #expand {
         hr := `hr;
         if !check_hr(name) {
@@ -115,43 +119,42 @@ set_capture_device :: (device: *Input_Device) {
         }
     }
 
-    hr := snd_pcm_open(cast(**snd_pcm_t)*device.internal_data, device.internal_id, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+    new_pcm: *snd_pcm_t;
+    hr := snd_pcm_open(*new_pcm, device.internal_id, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
     check("PCM open device");
-
-    pcm := cast(*snd_pcm_t)device.internal_data;
 
     hw_params: *snd_pcm_hw_params_t;
     snd_pcm_hw_params_malloc(*hw_params);
     defer snd_pcm_hw_params_free(hw_params);
 
-    snd_pcm_hw_params_any(pcm, hw_params);
+    snd_pcm_hw_params_any(new_pcm, hw_params);
 
-    hr = snd_pcm_hw_params_set_channels(pcm, hw_params, NUM_CHANNELS);
+    hr = snd_pcm_hw_params_set_channels(new_pcm, hw_params, NUM_CHANNELS);
     check("Set PCM channels");
 
-    hr = snd_pcm_hw_params_set_access(pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    hr = snd_pcm_hw_params_set_access(new_pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     check("Set PCM access");
 
-    hr = snd_pcm_hw_params_set_format(pcm, hw_params, SND_PCM_FORMAT_S16_MY_ENDIAN);
+    hr = snd_pcm_hw_params_set_format(new_pcm, hw_params, SND_PCM_FORMAT_S16_MY_ENDIAN);
     check("Set PCM format");
 
     actual_rate: u32 = SAMPLE_RATE;
-    hr = snd_pcm_hw_params_set_rate_near(pcm, hw_params, *actual_rate, null);
+    hr = snd_pcm_hw_params_set_rate_near(new_pcm, hw_params, *actual_rate, null);
     check("Set PCM sample rate");
 
-    hr = snd_pcm_hw_params(pcm, hw_params);
+    hr = snd_pcm_hw_params(new_pcm, hw_params);
     check("Set PCM hardware parameters");
 
-    hr = snd_pcm_prepare(pcm);
+    hr = snd_pcm_prepare(new_pcm);
     check("Prepare PCM");
 
-    if current_device && current_device.internal_data {
-        snd_pcm_close(current_device.internal_data);
-        current_device.internal_data = null;
+    if current_pcm {
+        snd_pcm_close(current_pcm);
+        current_pcm = null;
     }
 
 
-    current_device = device;
+    current_pcm = new_pcm;
 }
 
 #scope_module
@@ -163,10 +166,6 @@ backend_init :: () {
 free_device :: (using device: *Input_Device) {
     if name        c_free(name.data);
     if internal_id c_free(internal_id);
-    internal_data = null;
-    // if internal_data {
-        // snd_pcm_close(internal_data);
-    // }
 }
 
 alsa :: #library "libs/libasound";
@@ -374,4 +373,4 @@ check_hr :: (name: string) -> bool #expand {
 }
 
 default_device: *Input_Device;
-current_device: *Input_Device;
+current_pcm: *snd_pcm_t;

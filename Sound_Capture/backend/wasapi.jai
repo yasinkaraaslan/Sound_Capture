@@ -112,7 +112,7 @@ get_default_capture_device :: () -> *Input_Device {
     return null;
 }
 
-set_capture_device :: (device: *Input_Device) {
+set_capture_device :: (device: Input_Device) {
     if client {
         stop_recording();
         IUnknown_Release(client);
