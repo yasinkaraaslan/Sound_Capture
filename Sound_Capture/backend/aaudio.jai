@@ -4,6 +4,9 @@
 // <uses-permission android:name="android.permission.RECORD_AUDIO" />
 // If you are using Toolchains/Android, it will refresh the manifest file every time you compile unfortunately.
 
+// Make sure that android_has_audio_permission is true before initializing.
+// Otherwise bad things will happen.
+
 android_request_audio_permission :: () {
     // Taken from Charles Taylor's Android module
     check_env_init();
@@ -37,24 +40,6 @@ android_has_audio_permission :: () -> bool {
     result: u32;
     APermissionManager_checkPermission(ANDROID_AUDIO_PERMISSION, Posix.getpid(), Posix.getuid(), *result);
     return result == PERMISSION_GRANTED;
-}
-
-// Make sure that android_has_audio_permission is true before initializing.
-// Otherwise bad things will happen.
-capture_init :: () {
-    hr := AAudio_createStreamBuilder(*builder);
-    check_hr("Create stream builder");
-
-    AAudioStreamBuilder_setDirection(builder, xx AAUDIO_DIRECTION.INPUT);
-    AAudioStreamBuilder_setSharingMode(builder, .SHARED);
-    AAudioStreamBuilder_setPerformanceMode(builder, .LOW_LATENCY);
-    AAudioStreamBuilder_setSampleRate(builder, SAMPLE_RATE);
-    AAudioStreamBuilder_setChannelCount(builder, NUM_CHANNELS);
-    AAudioStreamBuilder_setFormat(builder, .PCM_I16);
-
-
-    refresh_capture_devices();
-    set_capture_device(get_default_capture_device());
 }
 
 start_recording :: () {
@@ -160,6 +145,17 @@ set_capture_device :: (device: *Input_Device) {
 }
 
 #scope_module
+backend_init :: () {
+    hr := AAudio_createStreamBuilder(*builder);
+    check_hr("Create stream builder");
+
+    AAudioStreamBuilder_setDirection(builder, xx AAUDIO_DIRECTION.INPUT);
+    AAudioStreamBuilder_setSharingMode(builder, .SHARED);
+    AAudioStreamBuilder_setPerformanceMode(builder, .LOW_LATENCY);
+    AAudioStreamBuilder_setSampleRate(builder, SAMPLE_RATE);
+    AAudioStreamBuilder_setChannelCount(builder, NUM_CHANNELS);
+    AAudioStreamBuilder_setFormat(builder, .PCM_I16);
+}
 
 #scope_file
 free_device :: (using device: *Input_Device) {

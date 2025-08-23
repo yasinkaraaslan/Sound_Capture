@@ -1,15 +1,3 @@
-capture_init :: () {
-    CoInitialize(null);
-
-    CLSID_MMDeviceEnumerator := *uid("BCDE0395-E52F-467C-8E3D-C4579291692E");
-    hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
-    check_hr("CoCreateInstance");
-
-    refresh_capture_devices();
-    default_device := get_default_capture_device();
-    set_capture_device(default_device);
-}
-
 start_recording :: () {
     hr := IAudioClient_Start(client);
     check_hr("Client start");
@@ -176,8 +164,17 @@ set_capture_device :: (device: *Input_Device) {
     check_hr("Client get service");
 
 }
+#scope_module
+backend_init :: () {
+    CoInitialize(null);
+
+    CLSID_MMDeviceEnumerator := *uid("BCDE0395-E52F-467C-8E3D-C4579291692E");
+    hr := CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, *uid(IMMDeviceEnumerator_UUID), cast(**void)*enumerator);
+    check_hr("CoCreateInstance");
+}
 
 #scope_file
+
 free_device :: (device: *Input_Device) {
     if device.name free(device.name);
     if device.internal_id CoTaskMemFree(device.internal_id);

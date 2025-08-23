@@ -1,8 +1,3 @@
-capture_init :: () {
-    refresh_capture_devices();
-    set_capture_device(get_default_capture_device());
-}
-
 start_recording :: () {
     hr := snd_pcm_start(current_device.internal_data);
     check_hr("Start PCM");
@@ -159,6 +154,10 @@ set_capture_device :: (device: *Input_Device) {
     current_device = device;
 }
 
+#scope_module
+backend_init :: () {
+    // Nothing to do
+}
 #scope_file
 
 free_device :: (using device: *Input_Device) {

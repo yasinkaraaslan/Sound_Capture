@@ -40,6 +40,13 @@ NUM_CHANNELS :: 2;
 BIT_DEPTH :: 16;
 BLOCK_ALIGN :: NUM_CHANNELS * BIT_DEPTH / 8;
 
+// All the other procedures are implemented in the respective backends.
+capture_init :: () {
+    backend_init();
+    refresh_capture_devices();
+    set_capture_device(get_default_capture_device());
+}
+
 #scope_module
 
 capture_thread: Thread;
