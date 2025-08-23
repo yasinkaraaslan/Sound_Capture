@@ -1,7 +1,7 @@
 #assert OS == .ANDROID;
 
 // NOTE(Yasin): You have to add this line to your AndroidManifest.xml file
-// <uses-permission android:name="android.permissions.RECORD_AUDIO" />
+// <uses-permission android:name="android.permission.RECORD_AUDIO" />
 // If you are using Toolchains/Android, it will refresh the manifest file every time you compile unfortunately.
 
 android_request_audio_permission :: () {
@@ -75,15 +75,17 @@ capture_deinit :: () {
 }
 
 get_next_sound_buffer :: () -> []s16 {
-    buffer := NewArray(2048, s16,, temp);
-    num_frames := AAudioStream_read(stream, buffer.data, cast(s32)buffer.count, 0);
+    NUM_FRAMES :: 2048;
+    buffer := NewArray(NUM_FRAMES * NUM_CHANNELS, s16,, temp);
+    num_frames := AAudioStream_read(stream, buffer.data, NUM_FRAMES, 0);
     if num_frames < 0 {
         hr := num_frames;
         check_hr("Audio stream read");
         return .[];
     }
+    if num_frames == 0 return .[];
 
-    buffer.count = num_frames;
+    buffer.count = num_frames * NUM_CHANNELS;
     return buffer;
 }
 
