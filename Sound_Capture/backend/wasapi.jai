@@ -177,6 +177,7 @@ set_capture_device :: (device: *Input_Device) {
 
 }
 
+#scope_file
 free_device :: (device: *Input_Device) {
     if device.name free(device.name);
     if device.internal_id CoTaskMemFree(device.internal_id);
@@ -185,7 +186,6 @@ free_device :: (device: *Input_Device) {
     device.* = .{};
 }
 
-#scope_file
 
 fill_device :: (device: *Input_Device, imm_device: *IMMDevice) {
     property_store: *IPropertyStore;
@@ -204,6 +204,7 @@ fill_device :: (device: *Input_Device, imm_device: *IMMDevice) {
 
     device.name = wide_to_utf8(var_name.pwszVal);
     PropVariantClear(*var_name);
+    #import "Windows_Utf8";
 }
 
 

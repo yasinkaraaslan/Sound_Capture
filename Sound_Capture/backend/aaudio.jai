@@ -8,14 +8,11 @@ android_request_audio_permission :: () {
     // Taken from Charles Taylor's Android module
     check_env_init();
 
-    e := env.*;
-
     String   := e.FindClass(env, "java/lang/String");
     Activity := e.FindClass(env, "android/app/Activity");
     requestPermissions := e.GetMethodID(env, Activity, "requestPermissions", "([Ljava/lang/String;I)V");
 
-    permission_jstring := e.NewStringUTF(env, ANDROID_AUDIO_PERMISSION);
-    defer e.DeleteLocalRef(env, permission_jstring);
+    permission_jstring := to_j_string(ANDROID_AUDIO_PERMISSION);
 
     // You have to pass an array of permissions, can't just pass one...
     permissions_array := e.NewObjectArray(env, 1, String, null);
@@ -42,7 +39,7 @@ android_has_audio_permission :: () -> bool {
     return result == PERMISSION_GRANTED;
 }
 
-// Make sure you that android_has_permission is true before initializing.
+// Make sure that android_has_audio_permission is true before initializing.
 // Otherwise bad things will happen.
 capture_init :: () {
     hr := AAudio_createStreamBuilder(*builder);
@@ -55,8 +52,9 @@ capture_init :: () {
     AAudioStreamBuilder_setChannelCount(builder, NUM_CHANNELS);
     AAudioStreamBuilder_setFormat(builder, .PCM_I16);
 
-    hr = AAudioStreamBuilder_openStream(builder, *stream);
-    check_hr("Open stream");
+
+    refresh_capture_devices();
+    set_capture_device(get_default_capture_device());
 }
 
 start_recording :: () {
@@ -99,33 +97,114 @@ get_next_sound_buffer :: () -> []s16 {
 }
 
 
-get_default_capture_device :: () -> Input_Device {
-    // @Incomplete
-    return .{};
+get_default_capture_device :: () -> *Input_Device {
+    return default_device;
 }
 
 refresh_capture_devices :: () {
-    // @Incomplete
+    for * sound_capture_devices {
+        free_device(it);
+    }
+    array_reset(*sound_capture_devices);
+
+    check_env_init();
+
+    getDevices := e.GetMethodID(env, AudioManager, "getDevices", "(I)[Landroid/media/AudioDeviceInfo;");
+
+
+    GET_DEVICES_INPUTS :: 1;
+
+    device_array := e.CallObjectMethod(env, audio_manager, getDevices, GET_DEVICES_INPUTS);
+    count := e.GetArrayLength(env, device_array);
+
+    array_reserve(*sound_capture_devices, count);
+
+    getId := e.GetMethodID(env, AudioDeviceInfo, "getId", "()I");
+    getProductName := e.GetMethodID(env, AudioDeviceInfo, "getProductName", "()Ljava/lang/CharSequence;");
+
+    CharSequence := e.FindClass(env, "java/lang/CharSequence");
+    toString := e.GetMethodID(env, CharSequence, "toString", "()Ljava/lang/String;");
+
+    for 0..count-1 {
+        device_info := e.GetObjectArrayElement(env, device_array, it);
+
+        id := e.CallIntMethod(env, device_info, getId);
+        char_seq := e.CallObjectMethod(env, device_info, getProductName);
+
+        j_string := e.CallObjectMethod(env, char_seq, toString);
+
+
+        device := array_add(*sound_capture_devices);
+        device.internal_id = cast(*void)id;
+        device.name = from_j_string(j_string);
+
+        if it == 0 {
+            // We are guessing that the first one is the default one, though this isn't documented.
+            // The actual way of getting the default device is much more complicated but we don't go that route.
+            default_device = device;
+        }
+    }
 }
 
 set_capture_device :: (device: *Input_Device) {
-    hr := AAudioStream_close(stream);
-    check_hr("Stream close");
-    stream = null;
+    if stream {
+        hr := AAudioStream_close(stream);
+        check_hr("Stream close");
+        stream = null;
+    }
 
-    id: s32 = cast(s32)device.internal_id;
+    id := cast(s32)device.internal_id;
     AAudioStreamBuilder_setDeviceId(builder, id);
-    hr = AAudioStreamBuilder_openStream(builder, *stream);
+    hr := AAudioStreamBuilder_openStream(builder, *stream);
     check_hr("Open stream");
 }
 
+#scope_module
+
 #scope_file
+free_device :: (using device: *Input_Device) {
+    if name free(name);
+
+    internal_id = null;
+    internal_data = null;
+}
+
 env: *JNIEnv;
-check_env_init :: inline () {
+audio_manager: jobject;
+AudioDeviceInfo: jclass;
+AudioManager: jclass;
+AndroidContext: jclass;
+AndroidString: jclass;
+
+
+to_j_string :: (s: string) -> jstring #expand {
+    j := env.*.NewStringUTF(env, temp_c_string(s));
+    `defer env.*.DeleteLocalRef(env, j);
+    return j;
+}
+
+from_j_string :: (j: jstring) -> string #expand {
+    c_string := env.*.GetStringUTFChars(env, j, null);
+    `defer env.*.ReleaseStringUTFChars(env, j, c_string);
+    return copy_string(to_string(c_string));
+}
+
+check_env_init :: () #expand {
     if !env {
         vm := context.android_app.activity.vm;
         vm.*.AttachCurrentThread(vm, *env, null);
+        AudioDeviceInfo = env.*.FindClass(env, "android/media/AudioDeviceInfo");
+        AndroidContext = env.*.FindClass(env, "android/content/Context");
+        AndroidString = env.*.FindClass(env, "java/lang/String");
+        AudioManager = env.*.FindClass(env, "android/media/AudioManager");
+
+        audio_jstring := to_j_string("audio");
+
+        getSystemService := env.*.GetMethodID(env, AndroidContext, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+        audio_manager = env.*.CallObjectMethod(env, context.android_app.activity.clazz, getSystemService, audio_jstring);
+
     }
+    `e := env.*;
 }
 
 check_hr :: (name: string) -> bool #expand {
@@ -141,5 +220,7 @@ check_hr :: (name: string) -> bool #expand {
 
 builder: *AAudioStreamBuilder;
 stream: *AAudioStream;
+
+default_device: *Input_Device;
 
 ANDROID_AUDIO_PERMISSION :: "android.permission.RECORD_AUDIO";

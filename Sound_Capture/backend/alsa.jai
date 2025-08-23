@@ -159,16 +159,17 @@ set_capture_device :: (device: *Input_Device) {
     current_device = device;
 }
 
+#scope_file
+
 free_device :: (using device: *Input_Device) {
     if name        c_free(name.data);
     if internal_id c_free(internal_id);
-
-    if internal_data {
-        snd_pcm_close(internal_data);
-    }
+    internal_data = null;
+    // if internal_data {
+        // snd_pcm_close(internal_data);
+    // }
 }
 
-#scope_file
 alsa :: #library "libs/libasound";
 
 

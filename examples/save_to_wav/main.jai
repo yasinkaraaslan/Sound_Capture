@@ -31,6 +31,9 @@ main :: () {
 
     while true {
         reset_temporary_storage();
+        #if OS == .ANDROID {
+            Input.android_process_events(); // To make sure we don't go into 'not responding' state
+        }
 
         next_buffer := get_next_sound_buffer();
         array_add(*buffer, ..next_buffer);
