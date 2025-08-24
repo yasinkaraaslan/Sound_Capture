@@ -92,17 +92,14 @@ refresh_capture_devices :: () {
 
         dev_str := to_string(dev_name);
 
-        if starts_with(dev_str, "sysdefault") {
+        if dev_str == "default" {
             default_device = device;
         }
-        else if dev_str == "default" { // This is actually the default output device. @FixMe before releasing!!
+        else if starts_with(dev_str, "sysdefault") {
             fallback_default_device = device;
         }
     }
-
-    if !default_device {
-        default_device = fallback_default_device;
-    }
+    if !default_device default_device = fallback_default_device;
 }
 
 get_default_capture_device  :: () -> *Input_Device {

@@ -5,7 +5,7 @@
 // If you are using Toolchains/Android, it will refresh the manifest file every time you compile unfortunately.
 
 // Make sure that android_has_audio_permission is true before initializing.
-// Otherwise bad things will happen.
+// Otherwise, bad things will happen.
 
 android_request_audio_permission :: () {
     // Taken from Charles Taylor's Android module
@@ -170,7 +170,6 @@ audio_manager: jobject;
 AudioDeviceInfo: jclass;
 AudioManager: jclass;
 AndroidContext: jclass;
-AndroidString: jclass;
 
 
 to_j_string :: (s: string) -> jstring #expand {
@@ -191,7 +190,6 @@ check_env_init :: () #expand {
         vm.*.AttachCurrentThread(vm, *env, null);
         AudioDeviceInfo = env.*.FindClass(env, "android/media/AudioDeviceInfo");
         AndroidContext = env.*.FindClass(env, "android/content/Context");
-        AndroidString = env.*.FindClass(env, "java/lang/String");
         AudioManager = env.*.FindClass(env, "android/media/AudioManager");
 
         audio_jstring := to_j_string("audio");
