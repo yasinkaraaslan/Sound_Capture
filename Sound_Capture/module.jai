@@ -14,7 +14,7 @@
 //
 // sound_capture_devices is an Input_Device array you can iterate.
 // It refreshes when you call refresh_capture_devices().
-// Input_Device struct contains a human-readable name and some internal data.
+// Input_Device contains a human-readable name and some internal data.
 // You can set an input device as the current device with set_capture_device()
 //
 // get_default_capture_device() will give you the latest known default device.
@@ -49,10 +49,6 @@ capture_init :: () {
 
 #scope_module
 
-capture_thread: Thread;
-capture_mutex: Mutex;
-
-#import "Thread";
 #import "Basic";
 
 #if OS == {
